@@ -1,399 +1,639 @@
 import streamlit as st
-from PIL import Image
-import io
-import numpy as np
-import tensorflow as tf  
+import tensorflow as tf
 import cv2
+import numpy as np
+from PIL import Image
+import os
 
-# ====== LOAD AI MODEL ======
-# Thay đổi đường dẫn theo model của bạn
-@st.cache_resource
-def load_model():
-    """
-    Load model AI đã train
-    """
-    model = tf.keras.models.load_model('final_model_chitay_finetuned.h5')
-    
-    return model
+# ==========================
+# CONFIG
+# ==========================
+MODEL_PATH = "final_model_chitay_finetuned.keras"
+IMG_SIZE = 128
 
-# ====== HÀM TIỀN XỬ LÝ ẢNH ======
-def preprocess_image(image):
-    """
-    Tiền xử lý ảnh trước khi đưa vào model
-    """
-    # Chuyển PIL sang numpy array
-    if isinstance(image, Image.Image):
-        img = np.array(image)
-    else:
-        img = image
-    
-    # Resize về kích thước model yêu cầu 
-    img = cv2.resize(img, (200, 200))
-    
-    # Chuẩn hóa (tùy theo cách bạn train)
-    img = img / 255.0  # Normalize về [0,1]
-    
-    # Thêm batch dimension
-    img = np.expand_dims(img, axis=0)
-    
-    return img
-
-# ====== HÀM DỰ ĐOÁN ======
-def predict_palm(image, model):
-    """
-    Dự đoán từ ảnh bàn tay
-    """
-    # Tiền xử lý ảnh
-    processed_img = preprocess_image(image)
-    
-    # Dự đoán
-    predictions = model.predict(processed_img)
-    
-    # ====== XỬ LÝ KẾT QUẢ ======
-    # Giả sử model output là 4 classes (4 đường)
-    # Và mỗi class có xác suất và mô tả
-    
-    # Ví dụ: model trả về xác suất cho 4 đường
-    # [sinh_dao, tam_dao, tri_dao, su_nghiep]
-    
-    # Tạo kết quả mẫu (thay bằng logic xử lý output của model bạn)
-    lines_data = {
-        'Sinh đạo': {
-            'score': float(predictions[0][0]),
-            'description': 'Sức khỏe tốt, tuổi thọ cao' if predictions[0][0] > 0.5 else 'Cần chú ý sức khỏe'
-        },
-        'Tâm đạo': {
-            'score': float(predictions[0][1]),
-            'description': 'Tình cảm sâu sắc, chân thành' if predictions[0][1] > 0.5 else 'Khó bày tỏ cảm xúc'
-        },
-        'Trí đạo': {
-            'score': float(predictions[0][2]),
-            'description': 'Tư duy logic, học hỏi tốt' if predictions[0][2] > 0.5 else 'Thiên về trực giác'
-        },
-        'Sự nghiệp': {
-            'score': float(predictions[0][3]),
-            'description': 'Cơ hội thăng tiến tốt' if predictions[0][3] > 0.5 else 'Cần nỗ lực nhiều hơn'
-        }
-    }
-    
-    # Tổng kết dựa trên điểm số
-    scores = [d['score'] for d in lines_data.values()]
-    avg_score = sum(scores) / len(scores)
-    
-    if avg_score > 0.7:
-        overall = '🌟 Tuyệt vời! Vận mệnh của bạn rất tốt đẹp!'
-    elif avg_score > 0.5:
-        overall = '✨ Tốt! Bạn có tiềm năng phát triển mạnh mẽ!'
-    else:
-        overall = '🌱 Còn nhiều cơ hội phía trước, hãy kiên trì!'
-    
-    return {
-        'overall': overall,
-        'lines': lines_data
-    }
-
-# ====== CẤU HÌNH TRANG ======
+# ==========================
+# CSS - MÀU CAM CHỦ ĐẠO
+# ==========================
 st.set_page_config(
-    page_title="Palmistry - Bói Vân Tay AI",
+    page_title="Palm Reading AI - Bói Vân Tay",
     page_icon="✋",
     layout="wide"
 )
 
-# ====== CSS ======
 st.markdown("""
     <style>
-    .main-title {
+    /* Màu cam chủ đạo */
+    .main-header {
         background: linear-gradient(135deg, #FF6B00, #FF8C42);
-        padding: 1.5rem;
-        border-radius: 15px;
+        padding: 2rem;
+        border-radius: 20px;
         text-align: center;
         margin-bottom: 2rem;
-        box-shadow: 0 4px 15px rgba(255, 107, 0, 0.3);
+        box-shadow: 0 8px 30px rgba(255, 107, 0, 0.3);
+        border: 2px solid rgba(255, 255, 255, 0.1);
     }
     
-    .main-title h1 {
+    .main-header h1 {
         color: white;
-        font-size: 2.5rem;
-        font-weight: 700;
+        font-size: 3rem;
+        font-weight: 800;
         margin: 0;
+        text-shadow: 3px 3px 6px rgba(0,0,0,0.2);
+        letter-spacing: 2px;
     }
     
-    .main-title p {
-        color: rgba(255,255,255,0.9);
-        font-size: 1.1rem;
+    .main-header p {
+        color: rgba(255,255,255,0.95);
+        font-size: 1.2rem;
         margin: 10px 0 0 0;
+        font-weight: 300;
     }
     
-    .camera-box {
+    .main-header .sub-info {
+        color: rgba(255,255,255,0.8);
+        font-size: 0.9rem;
+        margin-top: 8px;
+        background: rgba(0,0,0,0.15);
+        display: inline-block;
+        padding: 5px 20px;
+        border-radius: 20px;
+    }
+    
+    /* Khung ảnh */
+    .image-container {
         background: white;
         padding: 20px;
         border-radius: 15px;
-        border: 2px solid #FF8C42;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 3px solid #FF8C42;
+        box-shadow: 0 4px 20px rgba(255, 107, 0, 0.15);
+        margin-bottom: 15px;
     }
     
+    .image-container h4 {
+        color: #E55A00;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+    
+    /* Nút bấm cam */
     .stButton > button {
         background: linear-gradient(135deg, #FF6B00, #FF8C42);
         color: white;
-        font-weight: 600;
+        font-weight: 700;
+        font-size: 1.1rem;
         border: none;
-        border-radius: 10px;
-        padding: 0.6rem 1.8rem;
+        border-radius: 12px;
+        padding: 0.8rem 2rem;
         transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(255, 107, 0, 0.3);
         width: 100%;
+        letter-spacing: 1px;
     }
     
     .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 20px rgba(255, 107, 0, 0.4);
+        transform: translateY(-3px);
+        box-shadow: 0 6px 25px rgba(255, 107, 0, 0.5);
+        background: linear-gradient(135deg, #E55A00, #FF6B00);
     }
     
+    .stButton > button:active {
+        transform: translateY(0px);
+    }
+    
+    /* Khung kết quả */
     .result-box {
         background: linear-gradient(135deg, #FFF3EB, #FFE4D6);
         padding: 25px;
         border-radius: 15px;
-        border-left: 5px solid #FF6B00;
-        min-height: 200px;
-        box-shadow: 0 2px 10px rgba(255, 107, 0, 0.1);
+        border-left: 6px solid #FF6B00;
+        box-shadow: 0 2px 15px rgba(255, 107, 0, 0.1);
+        margin: 15px 0;
+        min-height: 150px;
     }
     
-    .score-bar {
+    .result-box h3 {
+        color: #E55A00;
+        font-weight: 700;
+        margin-bottom: 15px;
+        font-size: 1.5rem;
+    }
+    
+    /* Thẻ chỉ số */
+    .metric-card {
+        background: white;
+        padding: 15px;
+        border-radius: 12px;
+        border: 2px solid #FF8C42;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        text-align: center;
+        transition: transform 0.2s;
+    }
+    
+    .metric-card:hover {
+        transform: scale(1.02);
+    }
+    
+    .metric-card .label {
+        color: #666;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    
+    .metric-card .value {
+        color: #FF6B00;
+        font-size: 2rem;
+        font-weight: 800;
+        margin: 5px 0;
+    }
+    
+    .metric-card .bar {
         background: #f0f0f0;
         border-radius: 10px;
         height: 8px;
-        margin: 5px 0;
+        margin: 8px 0;
         overflow: hidden;
     }
     
-    .score-fill {
+    .metric-card .bar-fill {
         height: 100%;
         border-radius: 10px;
         background: linear-gradient(90deg, #FF8C42, #FF6B00);
-        transition: width 0.5s ease;
+        transition: width 1s ease;
     }
     
-    .line-card {
-        background: white;
-        padding: 12px;
+    /* Status badges */
+    .badge {
+        display: inline-block;
+        padding: 4px 15px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    
+    .badge-high {
+        background: #28a745;
+        color: white;
+    }
+    
+    .badge-medium {
+        background: #ffc107;
+        color: #333;
+    }
+    
+    .badge-low {
+        background: #dc3545;
+        color: white;
+    }
+    
+    /* Sidebar */
+    .sidebar-info {
+        background: #FFF3EB;
+        padding: 15px;
         border-radius: 10px;
-        margin-bottom: 10px;
-        border-left: 3px solid #FF6B00;
+        border-left: 4px solid #FF6B00;
+        margin: 10px 0;
+    }
+    
+    /* Footer */
+    .footer {
+        text-align: center;
+        color: #aaa;
+        font-size: 0.85rem;
+        padding: 20px;
+        margin-top: 30px;
+        border-top: 2px solid #FFE4D6;
+    }
+    
+    .footer strong {
+        color: #FF6B00;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# ====== HEADER ======
+# ==========================
+# HEADER
+# ==========================
 st.markdown("""
-    <div class="main-title">
-        <h1>✋ Bói Vân Tay - Palmistry AI</h1>
-        <p>AI phân tích 4 đường chỉ tay: Sinh đạo, Tâm đạo, Trí đạo, Sự nghiệp</p>
+    <div class="main-header">
+        <h1>✋ PALM READING AI SYSTEM</h1>
+        <p>Hệ thống bói vân tay thông minh với trí tuệ nhân tạo</p>
+        <div class="sub-info">
+            🧠 MobileNetV2 + Transfer Learning + Fine Tuning + Expert Rule Engine
+        </div>
     </div>
 """, unsafe_allow_html=True)
 
-# ====== SESSION STATE ======
-if 'image_captured' not in st.session_state:
-    st.session_state.image_captured = None
-if 'result_text' not in st.session_state:
-    st.session_state.result_text = None
-if 'model_loaded' not in st.session_state:
-    st.session_state.model_loaded = False
-if 'model' not in st.session_state:
-    st.session_state.model = None
+# ==========================
+# LOAD MODEL
+# ==========================
+@st.cache_resource
+def load_model():
+    """Tải model AI đã được fine-tuning"""
+    if not os.path.exists(MODEL_PATH):
+        st.error(f"❌ Không tìm thấy file model: {MODEL_PATH}")
+        st.info("💡 Vui lòng đảm bảo file model có trong thư mục hiện tại")
+        return None
+    
+    with st.spinner("⏳ Đang tải model AI ..."):
+        try:
+            model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+            st.success("✅ Model đã được tải thành công!")
+            return model
+        except Exception as e:
+            st.error(f"❌ Lỗi khi tải model: {str(e)}")
+            return None
 
-# ====== LOAD MODEL ======
-with st.sidebar:
-    st.markdown("### 🤖 Trạng thái AI")
-    
-    if st.button("🔄 Load AI Model", use_container_width=True):
-        with st.spinner("⏳ Đang load model..."):
-            try:
-                st.session_state.model = load_model()
-                st.session_state.model_loaded = True
-                st.success("✅ Model loaded thành công!")
-            except Exception as e:
-                st.error(f"❌ Lỗi load model: {str(e)}")
-    
-    if st.session_state.model_loaded:
-        st.success("✅ AI Model đã sẵn sàng")
+# ==========================
+# PREPROCESS
+# ==========================
+def preprocess_image(img):
+    """
+    Tiền xử lý ảnh đầu vào:
+    - Chuyển sang grayscale
+    - CLAHE tăng cường độ tương phản
+    - Resize về 128x128
+    - Chuẩn hóa về [0,1]
+    """
+    # Chuyển RGB sang grayscale nếu cần
+    if len(img.shape) == 3:
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     else:
-        st.warning("⚠️ Chưa load model")
-        st.info("💡 Nhấn nút trên để load model")
+        gray = img.copy()
+    
+    # CLAHE - Tăng cường độ tương phản để làm rõ các đường chỉ tay
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    gray = clahe.apply(gray)
+    
+    # Lưu ảnh đã xử lý để hiển thị
+    display_img = gray.copy()
+    
+    # Resize về kích thước model yêu cầu
+    gray = cv2.resize(gray, (IMG_SIZE, IMG_SIZE))
+    
+    # Chuẩn hóa về [0,1]
+    gray = gray.astype(np.float32) / 255.0
+    
+    # Tạo 3 channels (vì model dùng RGB)
+    gray = np.stack([gray, gray, gray], axis=-1)
+    
+    # Thêm batch dimension
+    gray = np.expand_dims(gray, axis=0)
+    
+    return gray, display_img
 
-# ====== LAYOUT CHÍNH ======
+# ==========================
+# EXPERT SYSTEM - HỆ CHUYÊN GIA
+# ==========================
+def generate_report(sd, td, tam, sn):
+    """
+    Hệ thống suy luận dựa trên các quy tắc chuyên gia (Expert Rule Engine)
+    Phân tích và đưa ra nhận định dựa trên 4 chỉ số:
+    - sd: Sinh đạo (Life Line)
+    - td: Trí đạo (Head Line)
+    - tam: Tâm đạo (Heart Line)
+    - sn: Sự nghiệp (Career Line)
+    """
+    report = []
+    
+    # Điểm tổng thể (weighted average)
+    overall = (sd * 0.25 + td * 0.30 + tam * 0.20 + sn * 0.25)
+    
+    # ===== PHÂN TÍCH SỰ NGHIỆP =====
+    if td > 0.7 and sn > 0.7:
+        report.append("🔹 **Sự Nghiệp & Trí Tuệ:** Có xu hướng phù hợp với các lĩnh vực kỹ thuật, công nghệ hoặc quản lý. Tư duy logic tốt kết hợp với khả năng hoạch định chiến lược sẽ giúp bạn đạt được nhiều thành công trong sự nghiệp.")
+    elif tam > 0.7 and td < 0.5:
+        report.append("🔹 **Sự Nghiệp & Trí Tuệ:** Có thiên hướng nghệ thuật, sáng tạo và giao tiếp. Bạn phù hợp với các công việc liên quan đến truyền thông, nghệ thuật, hoặc các lĩnh vực đòi hỏi sự đồng cảm và kết nối với con người.")
+    elif sn > 0.6:
+        report.append("🔹 **Sự Nghiệp:** Đường sự nghiệp khá rõ nét, cho thấy bạn có định hướng và mục tiêu trong công việc. Hãy tiếp tục phát huy thế mạnh của mình để đạt được thành công.")
+    else:
+        report.append("🔹 **Sự Nghiệp:** Đường sự nghiệp chưa thực sự rõ ràng, có thể bạn đang trong giai đoạn tìm kiếm hướng đi cho bản thân. Đừng ngại thử nghiệm và khám phá các lĩnh vực mới.")
+    
+    # ===== PHÂN TÍCH TÍNH CÁCH =====
+    if td > 0.7 and tam > 0.7:
+        report.append("🔹 **Tính Cách & Cảm Xúc:** Khả năng cân bằng giữa lý trí và cảm xúc khá tốt. Bạn vừa có tư duy phân tích sắc bén, vừa có sự nhạy cảm và thấu hiểu cảm xúc của người khác. Đây là một sự kết hợp tuyệt vời.")
+    elif td > tam:
+        report.append("🔹 **Tính Cách & Cảm Xúc:** Có xu hướng suy nghĩ logic và phân tích. Bạn thường đưa ra quyết định dựa trên lý trí và dữ liệu cụ thể. Tuy nhiên, hãy nhớ lắng nghe cảm xúc của mình nhiều hơn.")
+    elif tam > td:
+        report.append("🔹 **Tính Cách & Cảm Xúc:** Có xu hướng đưa ra quyết định dựa trên cảm xúc và trực giác. Bạn là người giàu cảm xúc, sống tình cảm và có sự đồng cảm sâu sắc với mọi người xung quanh.")
+    else:
+        report.append("🔹 **Tính Cách & Cảm Xúc:** Sự cân bằng giữa lý trí và cảm xúc ở mức trung bình. Bạn có khả năng điều chỉnh linh hoạt giữa hai yếu tố này tùy theo hoàn cảnh.")
+    
+    # ===== PHÂN TÍCH SỨC KHỎE =====
+    if sd > 0.8:
+        report.append("🔹 **Sức Khỏe:** Sinh đạo cao cho thấy sức bền và khả năng thích nghi tốt. Bạn có nền tảng sức khỏe dồi dào, khả năng phục hồi nhanh chóng sau bệnh tật và có thể duy trì năng lượng lâu dài.")
+    elif sd > 0.5:
+        report.append("🔹 **Sức Khỏe:** Thể trạng ở mức khá ổn định. Bạn nên duy trì lối sống lành mạnh, tập thể dục đều đặn và chế độ ăn uống hợp lý để bảo vệ sức khỏe lâu dài.")
+    else:
+        report.append("🔹 **Sức Khỏe:** Cần quan tâm đặc biệt đến sức khỏe. Nên cân bằng giữa học tập, làm việc và nghỉ ngơi. Đừng quên dành thời gian cho các hoạt động thư giãn và tái tạo năng lượng.")
+    
+    # ===== GỢI Ý PHÁT TRIỂN =====
+    if overall > 0.8:
+        report.append("🌟 **Gợi ý phát triển:** Các chỉ số đều ở mức cao và khá cân bằng. Bạn đang trên đà phát triển tốt. Hãy tiếp tục nuôi dưỡng những điểm mạnh và đừng ngần ngại khám phá những tiềm năng mới. Tương lai đang rộng mở với bạn!")
+    elif overall > 0.6:
+        report.append("🌟 **Gợi ý phát triển:** Có nhiều tiềm năng phát triển trong tương lai. Hãy tập trung vào việc cải thiện các điểm yếu và phát huy tối đa thế mạnh của mình. Mỗi ngày đều là cơ hội để bạn tiến bộ.")
+    elif overall > 0.4:
+        report.append("🌟 **Gợi ý phát triển:** Kết quả cho thấy còn nhiều yếu tố cần cải thiện. Đừng nản lòng, hãy xem đây là những cơ hội để bạn phát triển bản thân. Xác định rõ mục tiêu và từng bước thực hiện chúng.")
+    else:
+        report.append("🌟 **Gợi ý phát triển:** Bạn đang trong giai đoạn xây dựng nền tảng. Hãy kiên nhẫn và tập trung vào việc phát triển các kỹ năng cơ bản. Thành công đến từ sự nỗ lực không ngừng và học hỏi mỗi ngày.")
+    
+    # ===== XÁC ĐỊNH MỨC ĐỘ =====
+    if overall > 0.8:
+        level = "🌟 Rất Tốt"
+        badge_class = "badge-high"
+    elif overall > 0.6:
+        level = "👍 Khá"
+        badge_class = "badge-medium"
+    elif overall > 0.4:
+        level = "📊 Trung Bình"
+        badge_class = "badge-medium"
+    else:
+        level = "🔄 Cần Cải Thiện"
+        badge_class = "badge-low"
+    
+    # ===== TẠO BÁO CÁO HOÀN CHỈNH =====
+    final_text = f"""
+    <div style="background: white; padding: 20px; border-radius: 12px; border-left: 5px solid #FF6B00;">
+        <h3 style="color: #E55A00; margin-top: 0;">📊 ĐÁNH GIÁ TỔNG QUAN: <span class="badge {badge_class}">{level}</span></h3>
+        <hr style="border: 1px solid #FFE4D6;">
+        <div style="margin-top: 15px;">
+            {"<br>".join(report)}
+        </div>
+        <hr style="border: 1px solid #FFE4D6;">
+        <p style="color: #999; font-size: 0.85rem; margin-top: 10px;">
+            ⚠️ <em>Kết quả mang tính tham khảo, dựa trên phân tích đường chỉ tay và hệ thống chuyên gia.</em>
+        </p>
+    </div>
+    """
+    
+    return overall, final_text
+
+# ==========================
+# PREDICT FUNCTION
+# ==========================
+def predict_hand(img, model):
+    """
+    Hàm dự đoán chính:
+    1. Tiền xử lý ảnh
+    2. Dự đoán với model
+    3. Tạo báo cáo với expert system
+    """
+    if img is None or model is None:
+        return None, 0, 0, 0, 0, 0, "⚠️ Vui lòng chọn ảnh và đảm bảo model đã được tải."
+    
+    try:
+        # Tiền xử lý ảnh
+        x, processed_img = preprocess_image(img)
+        
+        # Dự đoán với model
+        pred = model.predict(x, verbose=0)[0]
+        
+        # Lấy các chỉ số
+        sd = float(pred[0])  # Sinh đạo
+        td = float(pred[1])  # Trí đạo
+        tam = float(pred[2]) # Tâm đạo
+        sn = float(pred[3])  # Sự nghiệp
+        
+        # Tạo báo cáo
+        overall, report_text = generate_report(sd, td, tam, sn)
+        
+        return (
+            processed_img,
+            round(sd * 100, 1),
+            round(td * 100, 1),
+            round(tam * 100, 1),
+            round(sn * 100, 1),
+            round(overall * 100, 1),
+            report_text
+        )
+    
+    except Exception as e:
+        st.error(f"❌ Lỗi khi dự đoán: {str(e)}")
+        return None, 0, 0, 0, 0, 0, f"❌ Có lỗi xảy ra: {str(e)}"
+
+# ==========================
+# MAIN UI
+# ==========================
+
+# Load model
+model = load_model()
+
+# Kiểm tra nếu model load thất bại
+if model is None:
+    st.warning("⚠️ Không thể tải model. Vui lòng kiểm tra file model.")
+    st.stop()
+
+# Layout 2 cột
 col_left, col_right = st.columns([1, 1])
 
-# ====== CỘT TRÁI: CHỤP ẢNH ======
+# ===== CỘT TRÁI: INPUT =====
 with col_left:
-    st.markdown("### 📸 Khu vực chụp ảnh")
+    st.markdown("### 📸 Tải ảnh bàn tay")
+    st.markdown("""
+    <div style="background: #FFF3EB; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 0.9rem;">
+        💡 Hướng dẫn: Tải ảnh bàn tay hoặc chụp trực tiếp từ webcam. 
+        Đảm bảo ảnh rõ nét, có đủ ánh sáng để hệ thống phân tích chính xác.
+    </div>
+    """, unsafe_allow_html=True)
     
-    with st.container():
-        st.markdown('<div class="camera-box">', unsafe_allow_html=True)
-        
-        option = st.radio(
-            "Chọn cách lấy ảnh:",
-            ["📷 Chụp từ Camera", "📁 Tải ảnh lên"],
-            horizontal=True
-        )
-        
-        st.markdown("---")
-        
-        if option == "📷 Chụp từ Camera":
-            camera_photo = st.camera_input(
-                "Hướng camera vào lòng bàn tay",
-                key="camera_input"
-            )
-            
-            if camera_photo is not None:
-                img = Image.open(camera_photo)
-                st.session_state.image_captured = img
-                st.image(img, caption="✅ Ảnh đã chụp", use_column_width=True)
-        
+    # Image input
+    uploaded_file = st.file_uploader(
+        "Chọn ảnh từ máy tính (JPG, PNG)",
+        type=['jpg', 'jpeg', 'png']
+    )
+    
+    # Hoặc camera
+    camera_photo = st.camera_input(
+        "Hoặc chụp trực tiếp từ camera",
+        key="camera"
+    )
+    
+    # Lấy ảnh từ file upload hoặc camera
+    if uploaded_file is not None:
+        img = Image.open(uploaded_file)
+        img_np = np.array(img)
+        st.session_state['input_image'] = img_np
+        st.image(img, caption="✅ Ảnh đã tải lên", use_column_width=True)
+    elif camera_photo is not None:
+        img = Image.open(camera_photo)
+        img_np = np.array(img)
+        st.session_state['input_image'] = img_np
+        st.image(img, caption="✅ Ảnh đã chụp", use_column_width=True)
+    else:
+        st.session_state['input_image'] = None
+    
+    # Nút dự đoán
+    if st.button("🔍 PHÂN TÍCH VÂN TAY", use_container_width=True):
+        if st.session_state.get('input_image') is not None:
+            with st.spinner("⏳ AI đang phân tích... Hệ thống đang tiền xử lý ảnh và chạy model..."):
+                result = predict_hand(st.session_state['input_image'], model)
+                if result:
+                    (processed_img, sd, td, tam, sn, overall, report) = result
+                    st.session_state['result'] = {
+                        'processed_img': processed_img,
+                        'sd': sd, 'td': td, 'tam': tam, 'sn': sn,
+                        'overall': overall, 'report': report
+                    }
+                    st.success("✅ Phân tích hoàn tất!")
         else:
-            uploaded_file = st.file_uploader(
-                "Chọn ảnh bàn tay (JPG, PNG)",
-                type=['jpg', 'jpeg', 'png']
-            )
-            
-            if uploaded_file is not None:
-                img = Image.open(uploaded_file)
-                st.session_state.image_captured = img
-                st.image(img, caption="✅ Ảnh đã tải lên", use_column_width=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    # ====== NÚT CHỨC NĂNG ======
-    st.markdown("---")
-    col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
-    
-    with col_btn1:
-        if st.button("🔮 Dự đoán", use_container_width=True):
-            # Kiểm tra đã có ảnh chưa
-            if st.session_state.image_captured is None:
-                st.warning("⚠️ Vui lòng chụp hoặc tải ảnh trước")
-            
-            # Kiểm tra đã load model chưa
-            elif not st.session_state.model_loaded:
-                st.warning("⚠️ Vui lòng load AI model trước")
-            
-            else:
-                with st.spinner("⏳ AI đang phân tích vân tay..."):
-                    try:
-                        # Gọi hàm predict với model
-                        result = predict_palm(
-                            st.session_state.image_captured,
-                            st.session_state.model
-                        )
-                        st.session_state.result_text = result
-                        st.success("✅ Dự đoán hoàn tất!")
-                    except Exception as e:
-                        st.error(f"❌ Lỗi dự đoán: {str(e)}")
-    
-    with col_btn2:
-        if st.button("🔄 Làm mới", use_container_width=True):
-            st.session_state.image_captured = None
-            st.session_state.result_text = None
-            st.rerun()
-    
-    with col_btn3:
-        if st.button("🗑️ Xóa ảnh", use_container_width=True):
-            st.session_state.image_captured = None
-            st.rerun()
+            st.warning("⚠️ Vui lòng tải ảnh hoặc chụp ảnh trước khi phân tích!")
 
-# ====== CỘT PHẢI: KẾT QUẢ ======
+# ===== CỘT PHẢI: KẾT QUẢ =====
 with col_right:
-    st.markdown("### 📊 Kết quả dự đoán")
+    st.markdown("### 🖐️ Kết quả phân tích")
     
-    st.markdown('<div class="result-box">', unsafe_allow_html=True)
-    
-    if st.session_state.result_text is not None:
-        result = st.session_state.result_text
+    # Hiển thị ảnh đã xử lý
+    if 'result' in st.session_state and st.session_state['result'] is not None:
+        result_data = st.session_state['result']
         
-        # Tổng quan
-        st.markdown("#### 🔮 Tổng quan")
-        st.markdown(f"""
-            <div style="background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-                <p style="font-size: 1.1rem; color: #333;">{result['overall']}</p>
-            </div>
-        """, unsafe_allow_html=True)
+        # Ảnh đã tiền xử lý
+        if result_data['processed_img'] is not None:
+            st.image(
+                result_data['processed_img'],
+                caption="📊 Ảnh sau tiền xử lý (CLAHE)",
+                use_column_width=True,
+                clamp=True
+            )
         
-        # Chi tiết từng đường
-        st.markdown("#### 🖐️ Chi tiết 4 đường")
+        # Các chỉ số
+        st.markdown("---")
+        st.markdown("#### 📈 Chỉ số chi tiết")
         
-        line_emojis = {
-            'Sinh đạo': '💪',
-            'Tâm đạo': '❤️',
-            'Trí đạo': '🧠',
-            'Sự nghiệp': '💼'
-        }
+        # Tạo 4 cột cho 4 đường
+        col1, col2 = st.columns(2)
         
-        # Hiển thị dạng thanh score
-        for line_name, data in result['lines'].items():
-            score = data['score']
-            description = data['description']
-            
-            # Xác định màu dựa trên score
-            if score > 0.7:
-                status = "🟢 Tốt"
-            elif score > 0.4:
-                status = "🟡 Trung bình"
-            else:
-                status = "🔴 Cần cải thiện"
-            
+        with col1:
+            # Sinh đạo
+            sd = result_data['sd']
             st.markdown(f"""
-                <div class="line-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <strong style="color: #E55A00;">{line_emojis.get(line_name, '')} {line_name}</strong>
-                        <span style="font-size: 0.9rem; color: #666;">{status}</span>
-                    </div>
-                    <div class="score-bar">
-                        <div class="score-fill" style="width: {score*100}%;"></div>
-                    </div>
-                    <p style="font-size: 0.9rem; margin-top: 8px; color: #555;">{description}</p>
-                    <p style="font-size: 0.8rem; color: #999; margin: 0;">Độ tin cậy: {score*100:.1f}%</p>
-                </div>
+            <div class="metric-card">
+                <div class="label">💪 Sinh Đạo</div>
+                <div class="value">{sd}%</div>
+                <div class="bar"><div class="bar-fill" style="width:{sd}%;"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Tâm đạo
+            tam = result_data['tam']
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="label">❤️ Tâm Đạo</div>
+                <div class="value">{tam}%</div>
+                <div class="bar"><div class="bar-fill" style="width:{tam}%;"></div></div>
+            </div>
             """, unsafe_allow_html=True)
         
-        # Nút xuất kết quả
+        with col2:
+            # Trí đạo
+            td = result_data['td']
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="label">🧠 Trí Đạo</div>
+                <div class="value">{td}%</div>
+                <div class="bar"><div class="bar-fill" style="width:{td}%;"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Sự nghiệp
+            sn = result_data['sn']
+            st.markdown(f"""
+            <div class="metric-card">
+                <div class="label">💼 Sự Nghiệp</div>
+                <div class="value">{sn}%</div>
+                <div class="bar"><div class="bar-fill" style="width:{sn}%;"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Điểm tổng thể
         st.markdown("---")
-        col_export1, col_export2 = st.columns(2)
+        overall_score = result_data['overall']
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #FF6B00, #FF8C42); padding: 15px; border-radius: 12px; text-align: center; margin: 10px 0;">
+            <span style="color: white; font-size: 1.2rem; font-weight: 600;">📊 ĐIỂM TỔNG THỂ</span>
+            <div style="color: white; font-size: 3rem; font-weight: 800;">{overall_score}%</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-        with col_export1:
-            if st.button("📋 Sao chép kết quả", use_container_width=True):
-                st.info("📋 Đã sao chép kết quả")
+        # Báo cáo chi tiết
+        st.markdown("---")
+        st.markdown("#### 📝 Báo cáo phân tích")
+        st.markdown(result_data['report'], unsafe_allow_html=True)
         
-        with col_export2:
-            if st.button("📥 Tải kết quả", use_container_width=True):
-                # Tạo text để tải
-                text = f"KẾT QUẢ BÓI VÂN TAY\n{'='*30}\n\n"
-                text += f"{result['overall']}\n\n"
-                for line_name, data in result['lines'].items():
-                    text += f"{line_name}: {data['description']} (Độ tin cậy: {data['score']*100:.1f}%)\n"
-                
-                st.download_button(
-                    label="📥 Tải file",
-                    data=text,
-                    file_name="ket_qua_boi_van_tay.txt",
-                    mime="text/plain",
-                    use_container_width=True
-                )
+        # Nút reset
+        if st.button("🔄 Làm mới kết quả", use_container_width=True):
+            st.session_state['result'] = None
+            st.session_state['input_image'] = None
+            st.rerun()
     
     else:
-        # Placeholder
+        # Placeholder khi chưa có kết quả
         st.markdown("""
-            <div style="text-align: center; padding: 40px 20px; color: #999;">
-                <p style="font-size: 3rem;">🔮</p>
-                <p style="font-size: 1.1rem;">Chưa có kết quả</p>
-                <p style="font-size: 0.9rem;">Hãy chụp ảnh bàn tay và nhấn "Dự đoán"</p>
-                <p style="font-size: 0.85rem; color: #ccc;">(Đảm bảo đã load AI model)</p>
-            </div>
+        <div style="text-align: center; padding: 50px 20px; color: #999;">
+            <p style="font-size: 4rem;">🔮</p>
+            <p style="font-size: 1.2rem; font-weight: 500;">Chưa có kết quả</p>
+            <p style="font-size: 0.9rem;">Tải ảnh bàn tay và nhấn <strong>"PHÂN TÍCH VÂN TAY"</strong></p>
+            <p style="font-size: 0.85rem; color: #ccc;">Hệ thống sẽ phân tích 4 đường chỉ tay chính</p>
+        </div>
         """, unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
-# ====== FOOTER ======
-st.markdown("---")
-st.markdown("""
-    <div style="text-align: center; color: #aaa; font-size: 0.85rem; padding: 10px;">
-        Made with ❤️ | Palmistry AI v2.0 | Kết quả mang tính tham khảo
+# ===== SIDEBAR =====
+with st.sidebar:
+    st.markdown("### 🤖 Hệ thống AI")
+    st.markdown("""
+    <div class="sidebar-info">
+        <strong>Model:</strong> MobileNetV2<br>
+        <strong>Phương pháp:</strong> Transfer Learning + Fine Tuning<br>
+        <strong>Expert System:</strong> Rule-based reasoning
     </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.markdown("### 📖 Hướng dẫn")
+    st.markdown("""
+    **1.** Tải ảnh bàn tay (upload hoặc chụp webcam)
+    
+    **2.** Nhấn **"PHÂN TÍCH VÂN TAY"**
+    
+    **3.** Xem kết quả:
+    - 🖐️ Ảnh đã tiền xử lý
+    - 📈 4 chỉ số đường chỉ tay
+    - 📝 Báo cáo phân tích chi tiết
+    """)
+    
+    st.markdown("---")
+    st.markdown("### 🖐️ 4 đường chỉ tay")
+    st.markdown("""
+    | Đường | Ý nghĩa |
+    |-------|---------|
+    | 💪 Sinh đạo | Sức khỏe, sinh lực |
+    | 🧠 Trí đạo | Trí tuệ, tư duy |
+    | ❤️ Tâm đạo | Tình cảm, cảm xúc |
+    | 💼 Sự nghiệp | Công việc, thành công |
+    """)
+    
+    st.markdown("---")
+    st.markdown("### ⚠️ Lưu ý")
+    st.markdown("""
+    - Kết quả mang tính **tham khảo**
+    - Đảm bảo ảnh **rõ nét**, đủ sáng
+    - Ảnh càng rõ, độ chính xác càng cao
+    """)
+    
+    st.markdown("---")
+    st.markdown(f"""
+    <div style="background: #FFF3EB; padding: 15px; border-radius: 10px; text-align: center;">
+        <p style="margin: 0; color: #E55A00; font-weight: 600;">🔶 Màu cam chủ đạo</p>
+        <p style="font-size: 0.85rem; color: #666; margin: 5px 0 0 0;">
+            Version 1.0 | Streamlit
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ===== FOOTER =====
+st.markdown("""
+<div class="footer">
+    Made with ❤️ | <strong>Palm Reading AI</strong> | 
+    MobileNetV2 + Transfer Learning + Fine Tuning + Expert System
+    <br>
+    <span style="font-size: 0.8rem;">© 2024 - Kết quả mang tính tham khảo</span>
+</div>
 """, unsafe_allow_html=True)
